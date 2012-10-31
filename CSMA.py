@@ -205,6 +205,7 @@ class G():
 	linksMap = []
 	dijkstraGraph = Graph()
 	dijkstraGraph.nodes = set(range(0, numOfNodes))
+	metricData = []
 #--------------------------------------------------------------------------------------------------------------------
 class VoicePacketGenerator(Process):
 	# Generates Calls at random according to ITU P59 Voice Model"""
@@ -533,98 +534,107 @@ class PacketHandler(Process):
 		self.name = name
 
 	def execute(self,source,destination,arrTime,CW,SRC,callNum):
-		if G.QATxOP[source] <= 0:
-			G.QATxOP[source] = ComputeQATxOP(source, callNum)
-		else:
-			G.QATxOP[source] -= 1
-		# Compute Network Status to be transmitted
-		self.NS = ComputeCQ(source,callNum)
 		
-		#print "Call ",callNum," started transmission from source ",source," to destination ",destination," at ",now()
-		# Transmit Packet on channel
-		G.qTime.append(now()-arrTime)
-		G.qTimeTime.append(now())
-		yield request,self,G.Channel
-		packetTransmissionTime = G.propagationDelay + G.packetSize/G.channelBitRate
-
-		# Update Transmission  Power
-		G.TransmissionPower[source] += G.transPower
-		# Impose slotTime delay since it takes a slotTime for any node to detect activity on channel
-		yield hold,self,G.slotTime-G.delta
-		# Interrupt all packets assuming channel busy
-		for victimThread in G.AssumingChannelFreeList:
-			self.interrupt(victimThread)
-		yield hold,self,0.5*packetTransmissionTime-(G.slotTime-G.delta)
-		self.collisionAtDestination = CheckSNR(source,destination)
-		yield hold,self,0.5*packetTransmissionTime
-		
-		
-		
+		#-------------------------------------------------------
 		#here is where we should update the dijsktraGraph, get the next best hop and retransmit the packet if
 		#the current node is not the final destination. Maybe if this is not the final destination we should
 		#not hold for packetTransmissionTime (consider that the full package is not transmitted to intermediate nodes)
 		#also how would an intermediate node influence transmission power?
 		#also we need to consider what happens in case of collision (if ack is not sent, will the package be resent?)
-		
-		
-		
-		yield release,self,G.Channel
-		# Update Transmission  Power
-		G.TransmissionPower[source] -= G.transPower
 			
-		# activate all passivated threads
-		for victim in G.PassivatedThreads:
-			reactivate(victim)
+		path = shortest_path(G.dijkstraGraph, source, destination)
+		if len(path) > 2:
+			g = VoicePacketGenerator(path[1], destination, callNum)		# instantiate a new object of type PacketGenerator
+			activate(g,g.execute())								# mark thread as runnable when first created
+			#InitializeCallNetworkParams(callNumber)
+			#G.numOfActiveCalls += 1
+			#holdingTime = expovariate(G.callsArrivalRate)
+			#yield hold,self,holdingTime
+		#-------------------------------------------------------
 		
-		# Check if packet latency time has exceeded threshold
-		if ((now()-arrTime) >= G.queuingThreshold):
-			self.packetDropped = True
-			if (G.startStatsGathering) :
-				G.numberOfPacketsDropped[callNum] += 1
-			G.NodePackets[source].signal()
-			#print now()
-			return
-		
-		# Collect statistics
-		if (self.collisionAtDestination == True):
-			yield hold,self,G.ackTimeoutInterval
-			if (G.startStatsGathering) :
-				G.numberOfPacketsColliding[callNum] += 1
-			G.QAIFS[callNum] = ComputeQAIFS(source,callNum)
-			#G.QAIFSstatistics.observe(G.QAIFS[callNum])
-			#print G.QAIFS[callNum]
-			
-			if (G.IFSmechanism == "DIFS"): yield hold,self,G.DIFS
-			if (G.IFSmechanism == "QAIFS"): yield hold,self,G.QAIFS[callNum]
-			#print "Collision at ",destination," for call ",callNum," from source ",source,"\n"
-
-			G.QATxOP[source] = 0
-			SRC += 1
-			if CW < G.CWmax:
-				CW *= 2
-			if (SRC > G.dot11ShortRetryLimit):
-				G.numberOfPacketsDropped[callNum] += 1
-				G.NodePackets[source].signal()
+		else:		
+			if G.QATxOP[source] <= 0:
+				G.QATxOP[source] = ComputeQATxOP(source, callNum)
 			else:
-				BOP = BackoffProcedure(name = self.name)
-				self.sim.activate(BOP,BOP.execute(source,destination,arrTime,CW,SRC,callNum))
-		else:
-			# No Collision detected
-					
-			# Nodes Should Update their Network Status upon successful reception
-			for i in range(1,G.numOfActiveCalls+1):
-				if (G.NNS[i] > G.ONS[i]):
-					G.ONS[i] = G.IFSalpha1*G.NNS[i] + (1-G.IFSalpha1)*G.ONS[i]
-				else:
-					G.ONS[i] = G.IFSalpha2*G.NNS[i] + (1-G.IFSalpha2)*G.ONS[i]
-				G.NNS[i] = self.NS
-				if G.NNS[i] == 0: G.NNS[i] = 0.0001
+				G.QATxOP[source] -= 1
+			# Compute Network Status to be transmitted
+			self.NS = ComputeCQ(source,callNum)
 			
-			#G.oneWayDelay.observe(now()-arrTime)
-			# Wait SIFS amount of time before transmitting Ack
-			yield hold,self,G.SIFS
-			Ack = SendAck(name = self.name)
-			self.sim.activate(Ack,Ack.execute(destination,source,arrTime,CW,SRC,callNum))
+			#print "Call ",callNum," started transmission from source ",source," to destination ",destination," at ",now()
+			# Transmit Packet on channel
+			G.qTime.append(now()-arrTime)
+			G.qTimeTime.append(now())
+			yield request,self,G.Channel
+			packetTransmissionTime = G.propagationDelay + G.packetSize/G.channelBitRate
+		
+			# Update Transmission  Power
+			G.TransmissionPower[source] += G.transPower
+			# Impose slotTime delay since it takes a slotTime for any node to detect activity on channel
+			yield hold,self,G.slotTime-G.delta
+			# Interrupt all packets assuming channel busy
+			for victimThread in G.AssumingChannelFreeList:
+				self.interrupt(victimThread)
+			yield hold,self,0.5*packetTransmissionTime-(G.slotTime-G.delta)
+			self.collisionAtDestination = CheckSNR(source,destination)
+			yield hold,self,0.5*packetTransmissionTime
+			
+			yield release,self,G.Channel
+			# Update Transmission  Power
+			G.TransmissionPower[source] -= G.transPower
+				
+			# activate all passivated threads
+			for victim in G.PassivatedThreads:
+				reactivate(victim)
+			
+			# Check if packet latency time has exceeded threshold
+			if ((now()-arrTime) >= G.queuingThreshold):
+				self.packetDropped = True
+				if (G.startStatsGathering) :
+					G.numberOfPacketsDropped[callNum] += 1
+				G.NodePackets[source].signal()
+				#print now()
+				return
+			
+			# Collect statistics
+			if (self.collisionAtDestination == True):
+				yield hold,self,G.ackTimeoutInterval
+				if (G.startStatsGathering) :
+					G.numberOfPacketsColliding[callNum] += 1
+				G.QAIFS[callNum] = ComputeQAIFS(source,callNum)
+				#G.QAIFSstatistics.observe(G.QAIFS[callNum])
+				#print G.QAIFS[callNum]
+				
+				if (G.IFSmechanism == "DIFS"): yield hold,self,G.DIFS
+				if (G.IFSmechanism == "QAIFS"): yield hold,self,G.QAIFS[callNum]
+				#print "Collision at ",destination," for call ",callNum," from source ",source,"\n"
+		
+				G.QATxOP[source] = 0
+				SRC += 1
+				if CW < G.CWmax:
+					CW *= 2
+				if (SRC > G.dot11ShortRetryLimit):
+					G.numberOfPacketsDropped[callNum] += 1
+					G.NodePackets[source].signal()
+				else:
+					BOP = BackoffProcedure(name = self.name)
+					self.sim.activate(BOP,BOP.execute(source,destination,arrTime,CW,SRC,callNum))
+			else:
+				# No Collision detected
+						
+				# Nodes Should Update their Network Status upon successful reception
+				for i in range(1,G.numOfActiveCalls+1):
+					if (G.NNS[i] > G.ONS[i]):
+						G.ONS[i] = G.IFSalpha1*G.NNS[i] + (1-G.IFSalpha1)*G.ONS[i]
+					else:
+						G.ONS[i] = G.IFSalpha2*G.NNS[i] + (1-G.IFSalpha2)*G.ONS[i]
+					G.NNS[i] = self.NS
+					if G.NNS[i] == 0: G.NNS[i] = 0.0001
+				
+				#G.oneWayDelay.observe(now()-arrTime)
+				# Wait SIFS amount of time before transmitting Ack
+				yield hold,self,G.SIFS
+				Ack = SendAck(name = self.name)
+				self.sim.activate(Ack,Ack.execute(destination,source,arrTime,CW,SRC,callNum))
 #--------------------------------------------------------------------------------------------------------------------
 class SendAck(Process):
 	def __init__(self,name="Packet"):
@@ -675,9 +685,6 @@ class CallsGenerator(Process):
 		FormulateNetwork(G.numOfNodes)
 		
 		ComputeDistances(G.numOfNodes)
-		#we create the DijkstraGraph with the calculated weights for each edge
-		#for now we use the distance (but i guess it should be a function between distance, pathloss and transmission power)
-		CreateDijkstraGraph(G.numOfNodes, G.Distances)
 		ConstructPathLossList(G.numOfNodes)
 		GenerateQueuingSystems()
 		GenerateNodesTransmissionStatus(G.numOfNodes)
@@ -685,6 +692,11 @@ class CallsGenerator(Process):
 		InitializeNodeTransmissionPower(G.numOfNodes)
 		InitializeStatistics(numOfCalls)
 		InitializePacketSoujornTimes(numOfCalls)
+		
+		#we calculate the metrics; for now we use the distance (but i guess it should be a function between distance, pathloss and transmission power)
+		ComputeMetric(G.numOfNodes)
+		#we create the DijkstraGraph with the calculated weights for each edge
+		CreateDijkstraGraph(G.numOfNodes, G.metricData)
 
 		for callNumber in range(1,numOfCalls+1):
 			# Pick Source
@@ -695,7 +707,7 @@ class CallsGenerator(Process):
 				dst = randint(0,G.numOfNodes-1)
 			g = VoicePacketGenerator(src,dst,callNumber)		# instantiate a new object of type PacketGenerator
 #			g = IndependentPacketGenerator(src,dst,callNumber)	# instantiate a new object of type IndependentPacketGenerator
-			activate(g,g.execute())								# mark thread as runnable when first created
+			activate(g,g.execute())					# mark thread as runnable when first created
 			InitializeCallNetworkParams(callNumber)
 			G.numOfActiveCalls += 1
 			holdingTime = expovariate(G.callsArrivalRate)
@@ -797,6 +809,9 @@ def ComputeDistances(numOfNodes):
 		tempList = []
 
 
+def ComputeMetric(numOfNodes):
+	G.metricData = G.Distances
+
 def CreateDijkstraGraph(numOfNodes, edgeWeights):
 	#we reset the dijkstraGraph in case the weights have changed
 	dijkstraGraph = Graph()
@@ -808,7 +823,7 @@ def CreateDijkstraGraph(numOfNodes, edgeWeights):
 			G.dijkstraGraph.add_edge(i, j, edgeWeights[i][j])
 	
 	#just a test, print the shortest path between node 1 and node 10
-	print shortest_path(G.dijkstraGraph, 1, 10)
+	#print shortest_path(G.dijkstraGraph, 1, 10)
 
 #--------------------------------------------------------------------------------------------------------------------
 def InitializeNodeTransmissionPower(numOfNodes):
