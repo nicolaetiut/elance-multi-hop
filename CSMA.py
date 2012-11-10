@@ -201,11 +201,10 @@ class G():
 	#qTime = Monitor(name="Time packets spent in the queue",ylab="Probability of Delay",tlab="Packet Delay")
 	#oneWayDelay = Monitor(name="End-To-End Delay",ylab="One-Way delay (ms)",tlab="Packet Number")
 	
-	routingTables = {}
-	linksMap = []
-	dijkstraGraph = Graph()
-	dijkstraGraph.nodes = set(range(0, numOfNodes))
-	metricData = []
+	RoutingTables = {}
+	DijkstraGraph = Graph()
+	DijkstraGraph.nodes = set(range(0, numOfNodes))
+	EdgeWeights = []
 #--------------------------------------------------------------------------------------------------------------------
 class VoicePacketGenerator(Process):
 	# Generates Calls at random according to ITU P59 Voice Model"""
@@ -535,22 +534,13 @@ class PacketHandler(Process):
 
 	def execute(self,source,destination,arrTime,CW,SRC,callNum):
 		
-		#-------------------------------------------------------
-		#here is where we should update the dijsktraGraph, get the next best hop and retransmit the packet if
-		#the current node is not the final destination. Maybe if this is not the final destination we should
-		#not hold for packetTransmissionTime (consider that the full package is not transmitted to intermediate nodes)
-		#also how would an intermediate node influence transmission power?
-		#also we need to consider what happens in case of collision (if ack is not sent, will the package be resent?)
-			
-		path = shortest_path(G.dijkstraGraph, source, destination)
-		if len(path) > 2:
-			g = VoicePacketGenerator(path[1], destination, callNum)		# instantiate a new object of type PacketGenerator
-			activate(g,g.execute())								# mark thread as runnable when first created
-			#InitializeCallNetworkParams(callNumber)
-			#G.numOfActiveCalls += 1
-			#holdingTime = expovariate(G.callsArrivalRate)
-			#yield hold,self,holdingTime
-		#-------------------------------------------------------
+		#here is where we get the next best hop and retransmit the packet if
+		#the current node is not the final destination.
+		
+		next_hop = G.RoutingTables[source][destination]
+		if next_hop != destination:
+			g = VoicePacketGenerator(next_hop, destination, callNum)	# instantiate a new object of type PacketGenerator
+			activate(g,g.execute())						# mark thread as runnable when first created
 		
 		else:		
 			if G.QATxOP[source] <= 0:
@@ -693,10 +683,14 @@ class CallsGenerator(Process):
 		InitializeStatistics(numOfCalls)
 		InitializePacketSoujornTimes(numOfCalls)
 		
-		#we calculate the metrics; for now we use the distance (but i guess it should be a function between distance, pathloss and transmission power)
-		ComputeMetric(G.numOfNodes)
+		#we calculate the edge weights;
+		ComputeEdgeWeights(G.numOfNodes)
+		
 		#we create the DijkstraGraph with the calculated weights for each edge
-		CreateDijkstraGraph(G.numOfNodes, G.metricData)
+		CreateDijkstraGraph(G.numOfNodes, G.EdgeWeights)
+		
+		#we build the routing tables using the DijkstraGraph
+		BuildRoutingTables(G.numOfNodes)
 
 		for callNumber in range(1,numOfCalls+1):
 			# Pick Source
@@ -809,21 +803,59 @@ def ComputeDistances(numOfNodes):
 		tempList = []
 
 
-def ComputeMetric(numOfNodes):
-	G.metricData = G.Distances
+def ComputeEdgeWeights(numOfNodes):
+	#The initial assumption was not correct. We cannot set the weight of each edge to be the distance
+	#because that would make the direct path between node A and B to also be the shortest.
+	#So, to make the distance important:
+	#------------------------------------
+	#if the nodes are no more than 50 px appart, the weight is the distance
+	#if the nodes are no more than 100 px appart, the weight is double the distance
+	#if the nodes are no more than 150 px appart, the weight is triple the distance
+	#and so on...
+	#------------------------------------
+	tempList = []
+	for column in range(numOfNodes):
+		for row in range(numOfNodes):
+			if column == row:
+				tempList.append(0)
+			else:
+				distance = math.sqrt((G.NodesLocations[column][0]-G.NodesLocations[row][0])**2 + (G.NodesLocations[column][1]-G.NodesLocations[row][1])**2)
+				#This is where the weight is calculated based on the distance
+				edgeWeight = distance/50 * distance
+				tempList.append(edgeWeight)
+		G.EdgeWeights.append(tempList)
+		tempList = []
+	
 
 def CreateDijkstraGraph(numOfNodes, edgeWeights):
-	#we reset the dijkstraGraph in case the weights have changed
-	dijkstraGraph = Graph()
-	dijkstraGraph.nodes = set(range(0, numOfNodes))
+	#we reset the DijkstraGraph in case the weights have changed
+	G.DijkstraGraph = Graph()
+	G.DijkstraGraph.nodes = set(range(0, numOfNodes))
 	
-	#we add each edge (between all the nodes) with their corresponding weight to the dijkstraGraph
+	#we add each edge (between all the nodes) with their corresponding weight to the DijkstraGraph
 	for i in range(numOfNodes):
 		for j in range(i, numOfNodes):		
-			G.dijkstraGraph.add_edge(i, j, edgeWeights[i][j])
-	
-	#just a test, print the shortest path between node 1 and node 10
-	#print shortest_path(G.dijkstraGraph, 1, 10)
+			G.DijkstraGraph.add_edge(i, j, edgeWeights[i][j])
+
+
+def BuildRoutingTables(numOfNodes):
+	for source in range(numOfNodes):
+		for destination in range(numOfNodes):
+			if source == destination:
+				#Does not matter, no package is sent from A to A for example.
+				next_hop = source
+			else:
+				#We get the next node in the shortest path to be the next_hop
+				next_hop = shortest_path(G.DijkstraGraph, source, destination)[1]
+
+			#if the routing table for the source has not been created yet, we initialize it
+			if not G.RoutingTables.get(source):
+				G.RoutingTables[source] = {}
+			
+			#we add to the routing table of the source, the next_hop for destination
+			routingTable = G.RoutingTables.get(source)	
+			routingTable[destination] = next_hop
+
 
 #--------------------------------------------------------------------------------------------------------------------
 def InitializeNodeTransmissionPower(numOfNodes):
