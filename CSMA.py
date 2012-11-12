@@ -538,93 +538,97 @@ class PacketHandler(Process):
 		#the current node is not the final destination.
 		
 		next_hop = G.RoutingTables[source][destination]
-		if next_hop != destination:
-			g = VoicePacketGenerator(next_hop, destination, callNum)	# instantiate a new object of type PacketGenerator
-			activate(g,g.execute())						# mark thread as runnable when first created
+		#if next_hop != destination:
+		#	g = VoicePacketGenerator(next_hop, destination, callNum)	# instantiate a new object of type PacketGenerator
+		#	activate(g,g.execute())						# mark thread as runnable when first created
 		
-		else:		
-			if G.QATxOP[source] <= 0:
-				G.QATxOP[source] = ComputeQATxOP(source, callNum)
-			else:
-				G.QATxOP[source] -= 1
-			# Compute Network Status to be transmitted
-			self.NS = ComputeCQ(source,callNum)
-			
-			#print "Call ",callNum," started transmission from source ",source," to destination ",destination," at ",now()
-			# Transmit Packet on channel
-			G.qTime.append(now()-arrTime)
-			G.qTimeTime.append(now())
-			yield request,self,G.Channel
-			packetTransmissionTime = G.propagationDelay + G.packetSize/G.channelBitRate
+	
+		if G.QATxOP[source] <= 0:
+			G.QATxOP[source] = ComputeQATxOP(source, callNum)
+		else:
+			G.QATxOP[source] -= 1
+		# Compute Network Status to be transmitted
+		self.NS = ComputeCQ(source,callNum)
 		
-			# Update Transmission  Power
-			G.TransmissionPower[source] += G.transPower
-			# Impose slotTime delay since it takes a slotTime for any node to detect activity on channel
-			yield hold,self,G.slotTime-G.delta
-			# Interrupt all packets assuming channel busy
-			for victimThread in G.AssumingChannelFreeList:
-				self.interrupt(victimThread)
-			yield hold,self,0.5*packetTransmissionTime-(G.slotTime-G.delta)
-			self.collisionAtDestination = CheckSNR(source,destination)
-			yield hold,self,0.5*packetTransmissionTime
+		#print "Call ",callNum," started transmission from source ",source, " to hop ",next_hop," for destination ",destination," at ",now()
+		# Transmit Packet on channel
+		G.qTime.append(now()-arrTime)
+		G.qTimeTime.append(now())
+		yield request,self,G.Channel
+		packetTransmissionTime = G.propagationDelay + G.packetSize/G.channelBitRate
+	
+		# Update Transmission  Power
+		G.TransmissionPower[source] += G.transPower
+		# Impose slotTime delay since it takes a slotTime for any node to detect activity on channel
+		yield hold,self,G.slotTime-G.delta
+		# Interrupt all packets assuming channel busy
+		for victimThread in G.AssumingChannelFreeList:
+			self.interrupt(victimThread)
+		yield hold,self,0.5*packetTransmissionTime-(G.slotTime-G.delta)
+		self.collisionAtDestination = CheckSNR(source,next_hop)
+		yield hold,self,0.5*packetTransmissionTime
+		
+		yield release,self,G.Channel
+		# Update Transmission  Power
+		G.TransmissionPower[source] -= G.transPower
 			
-			yield release,self,G.Channel
-			# Update Transmission  Power
-			G.TransmissionPower[source] -= G.transPower
-				
-			# activate all passivated threads
-			for victim in G.PassivatedThreads:
-				reactivate(victim)
+		# activate all passivated threads
+		for victim in G.PassivatedThreads:
+			reactivate(victim)
+		
+		# Check if packet latency time has exceeded threshold
+		if ((now()-arrTime) >= G.queuingThreshold):
+			self.packetDropped = True
+			if (G.startStatsGathering) :
+				G.numberOfPacketsDropped[callNum] += 1
+			G.NodePackets[source].signal()
+			#print now()
+			return
+		
+		# Collect statistics
+		if (self.collisionAtDestination == True):
+			yield hold,self,G.ackTimeoutInterval
+			if (G.startStatsGathering) :
+				G.numberOfPacketsColliding[callNum] += 1
+			G.QAIFS[callNum] = ComputeQAIFS(source,callNum)
+			#G.QAIFSstatistics.observe(G.QAIFS[callNum])
+			#print G.QAIFS[callNum]
 			
-			# Check if packet latency time has exceeded threshold
-			if ((now()-arrTime) >= G.queuingThreshold):
-				self.packetDropped = True
-				if (G.startStatsGathering) :
-					G.numberOfPacketsDropped[callNum] += 1
+			if (G.IFSmechanism == "DIFS"): yield hold,self,G.DIFS
+			if (G.IFSmechanism == "QAIFS"): yield hold,self,G.QAIFS[callNum]
+			#print "Collision at ",destination," for call ",callNum," from source ",source,"\n"
+	
+			G.QATxOP[source] = 0
+			SRC += 1
+			if CW < G.CWmax:
+				CW *= 2
+			if (SRC > G.dot11ShortRetryLimit):
+				G.numberOfPacketsDropped[callNum] += 1
 				G.NodePackets[source].signal()
-				#print now()
-				return
-			
-			# Collect statistics
-			if (self.collisionAtDestination == True):
-				yield hold,self,G.ackTimeoutInterval
-				if (G.startStatsGathering) :
-					G.numberOfPacketsColliding[callNum] += 1
-				G.QAIFS[callNum] = ComputeQAIFS(source,callNum)
-				#G.QAIFSstatistics.observe(G.QAIFS[callNum])
-				#print G.QAIFS[callNum]
-				
-				if (G.IFSmechanism == "DIFS"): yield hold,self,G.DIFS
-				if (G.IFSmechanism == "QAIFS"): yield hold,self,G.QAIFS[callNum]
-				#print "Collision at ",destination," for call ",callNum," from source ",source,"\n"
-		
-				G.QATxOP[source] = 0
-				SRC += 1
-				if CW < G.CWmax:
-					CW *= 2
-				if (SRC > G.dot11ShortRetryLimit):
-					G.numberOfPacketsDropped[callNum] += 1
-					G.NodePackets[source].signal()
-				else:
-					BOP = BackoffProcedure(name = self.name)
-					self.sim.activate(BOP,BOP.execute(source,destination,arrTime,CW,SRC,callNum))
 			else:
-				# No Collision detected
-						
-				# Nodes Should Update their Network Status upon successful reception
-				for i in range(1,G.numOfActiveCalls+1):
-					if (G.NNS[i] > G.ONS[i]):
-						G.ONS[i] = G.IFSalpha1*G.NNS[i] + (1-G.IFSalpha1)*G.ONS[i]
-					else:
-						G.ONS[i] = G.IFSalpha2*G.NNS[i] + (1-G.IFSalpha2)*G.ONS[i]
-					G.NNS[i] = self.NS
-					if G.NNS[i] == 0: G.NNS[i] = 0.0001
-				
-				#G.oneWayDelay.observe(now()-arrTime)
-				# Wait SIFS amount of time before transmitting Ack
-				yield hold,self,G.SIFS
-				Ack = SendAck(name = self.name)
-				self.sim.activate(Ack,Ack.execute(destination,source,arrTime,CW,SRC,callNum))
+				BOP = BackoffProcedure(name = self.name)
+				self.sim.activate(BOP,BOP.execute(source,next_hop,arrTime,CW,SRC,callNum))
+		else:
+			# No Collision detected
+					
+			# Nodes Should Update their Network Status upon successful reception
+			for i in range(1,G.numOfActiveCalls+1):
+				if (G.NNS[i] > G.ONS[i]):
+					G.ONS[i] = G.IFSalpha1*G.NNS[i] + (1-G.IFSalpha1)*G.ONS[i]
+				else:
+					G.ONS[i] = G.IFSalpha2*G.NNS[i] + (1-G.IFSalpha2)*G.ONS[i]
+				G.NNS[i] = self.NS
+				if G.NNS[i] == 0: G.NNS[i] = 0.0001
+			
+			#G.oneWayDelay.observe(now()-arrTime)
+			# Wait SIFS amount of time before transmitting Ack
+			yield hold,self,G.SIFS
+			Ack = SendAck(name = self.name)
+			self.sim.activate(Ack,Ack.execute(next_hop,source,arrTime,CW,SRC,callNum))
+			
+			if next_hop != destination:
+				g = VoicePacketGenerator(next_hop, destination, callNum)	# instantiate a new object of type PacketGenerator
+				activate(g,g.execute())	
 #--------------------------------------------------------------------------------------------------------------------
 class SendAck(Process):
 	def __init__(self,name="Packet"):
