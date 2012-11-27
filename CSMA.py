@@ -808,24 +808,13 @@ def ComputeDistances(numOfNodes):
 
 
 def ComputeEdgeWeights(numOfNodes):
-	#The initial assumption was not correct. We cannot set the weight of each edge to be the distance
-	#because that would make the direct path between node A and B to also be the shortest.
-	#So, to make the distance important:
-	#------------------------------------
-	#if the nodes are no more than 50 px appart, the weight is the distance
-	#if the nodes are no more than 100 px appart, the weight is double the distance
-	#if the nodes are no more than 150 px appart, the weight is triple the distance
-	#and so on...
-	#------------------------------------
 	tempList = []
 	for column in range(numOfNodes):
 		for row in range(numOfNodes):
 			if column == row:
 				tempList.append(0)
 			else:
-				distance = math.sqrt((G.NodesLocations[column][0]-G.NodesLocations[row][0])**2 + (G.NodesLocations[column][1]-G.NodesLocations[row][1])**2)
-				#This is where the weight is calculated based on the distance
-				edgeWeight = distance/50 * distance
+				edgeWeight = G.PathLoss[column][row]
 				tempList.append(edgeWeight)
 		G.EdgeWeights.append(tempList)
 		tempList = []
