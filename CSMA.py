@@ -864,6 +864,7 @@ def ConstructPathLossList(numOfNodes):
 		tempList = []
 #--------------------------------------------------------------------------------------------------------------------
 def PlotNetwork(numOfNodes):
+	#First plot-----------------------------------------------------
 	tempList = []
 	plt=SimPlot()
 	plt.root.title("The plot")
@@ -882,7 +883,23 @@ def PlotNetwork(numOfNodes):
 	graph=plt.makeGraphBase(frame,1000,600, title="Network")      
 	graph.pack()                                        
 	graph.draw(obj)                                     
-	frame.pack()                                     
+	frame.pack()
+	
+	#Second plot-----------------------------------------------------
+	#Need to create a new root (Tk()) for every new plot
+	#We use the same 'plt' object
+	root1 = Tk()
+	root1.title = "Panel 2"
+	line = plt.makeLine([[0,0],[1,1],[2,4],[3,9]])
+	obj2 = plt.makeGraphObjects([line])
+	#Need to create a new frame and graph for our new root
+	frame2=Frame(root1)                               
+	graph2=plt.makeGraphBase(frame2,1000,600, title="Network")      
+	graph2.pack()                                     
+	graph2.draw(obj2)                                     
+	frame2.pack()
+	
+	#This must be at the end
 	plt.mainloop()
 #--------------------------------------------------------------------------------------------------------------------
 def GenerateQueuingSystems():

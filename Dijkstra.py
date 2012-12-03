@@ -25,12 +25,10 @@ class Graph(object):
 
 def dijkstra(graph, initial_node):
     visited = {initial_node: 0}
+    current_node = initial_node
     path = {}
     
     nodes = set(graph.nodes)
-    count = {}
-    for node in nodes:
-        count[node] = 1
     
     while nodes:
         min_node = None
@@ -47,33 +45,16 @@ def dijkstra(graph, initial_node):
         nodes.remove(min_node)
         cur_wt = visited[min_node]
         
-        print min_node
-        print cur_wt
         for edge in graph.edges[min_node]:
-            if (cur_wt == 0):
-                wt = cur_wt + graph.distances[(min_node, edge)]
-            else:
-                print count[min_node], graph.distances[(min_node, edge)]
-                wt = float(cur_wt*count[min_node] + graph.distances[(min_node, edge)])/(count[min_node] + 1)
-            if (edge not in visited or wt < visited[edge]) and path.get(min_node, -1) != edge:
-                if edge in visited and wt < visited[edge]:
-                    count[edge] = count[edge] + 1
-                print 'changing to new weight for', edge, wt
+            wt = cur_wt + graph.distances[(min_node, edge)]
+            if edge not in visited or wt < visited[edge]:
                 visited[edge] = wt
                 path[edge] = min_node
-                
-                
-            else:
-                print 'not changing to new weight for', edge, wt
-                
-        print '---------------'
     
     return visited, path
 
 def shortest_path(graph, initial_node, goal_node):
     distances, paths = dijkstra(graph, initial_node)
-    print distances
-    print paths
     route = [goal_node]
 
     while goal_node != initial_node:
@@ -82,22 +63,3 @@ def shortest_path(graph, initial_node, goal_node):
 
     route.reverse()
     return route
-
-
-if __name__ == '__main__':
-    g = Graph()
-    g.nodes = set(range(1, 7))
-    g.add_edge(1, 2, 7)
-    g.add_edge(1, 3, 9)
-    g.add_edge(1, 6, 14)
-    g.add_edge(2, 3, 10)
-    g.add_edge(2, 4, 15)
-    g.add_edge(3, 4, 11)
-    g.add_edge(3, 6, 2)
-    g.add_edge(4, 5, 6)
-    g.add_edge(5, 6, 9)
-    shortest_path(g, 1, 5)
-    assert shortest_path(g, 1, 5) == [1, 3, 6, 5]
-    assert shortest_path(g, 5, 1) == [5, 6, 3, 1]
-    assert shortest_path(g, 2, 5) == [2, 3, 6, 5]
-    assert shortest_path(g, 1, 4) == [1, 3, 4] 
